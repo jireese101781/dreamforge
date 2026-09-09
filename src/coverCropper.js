@@ -1,6 +1,7 @@
-const CROP_WIDTH = 800
-const CROP_HEIGHT = 1000
-const ASPECT = CROP_WIDTH / CROP_HEIGHT
+const COVER_WIDTH = 1024
+const COVER_HEIGHT = 1535
+const COVER_RATIO = COVER_WIDTH / COVER_HEIGHT
+const MAX_FILE_SIZE = 5 * 1024 * 1024
 
 let modal = null
 let image = null
@@ -20,23 +21,25 @@ function injectStyles() {
   const style = document.createElement("style")
   style.id = "dreamforge-cover-cropper-styles"
   style.textContent = `
-    .df-crop-overlay{position:fixed;inset:0;z-index:9999;background:rgba(3,4,9,.86);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px}
+    .df-crop-overlay{position:fixed;inset:0;z-index:9999;background:rgba(3,4,9,.88);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px}
     .df-crop-modal{width:min(920px,100%);max-height:95vh;overflow:auto;background:linear-gradient(145deg,#171925,#0d0f16);border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:24px;box-shadow:0 30px 100px rgba(0,0,0,.65),0 0 45px rgba(139,92,246,.12);color:#f5f5f7;font-family:Inter,Arial,sans-serif}
-    .df-crop-head{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}.df-crop-head h2{margin:0;font-size:22px}.df-crop-head p{margin:5px 0 0;color:#9295a5;font-size:13px}
+    .df-crop-head{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}.df-crop-head h2{margin:0;font-size:22px}.df-crop-head p{margin:5px 0 0;color:#9295a5;font-size:13px;line-height:1.45}
     .df-crop-close{border:1px solid rgba(255,255,255,.08);background:#181a25;color:#fff;border-radius:10px;width:38px;height:38px;font-size:20px;cursor:pointer}.df-crop-close:hover{background:#8b5cf6}
-    .df-crop-workspace{display:flex;justify-content:center;align-items:center;background:#08090d;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:20px;min-height:500px}
-    .df-crop-viewport{position:relative;width:min(400px,80vw);aspect-ratio:4/5;overflow:hidden;border-radius:10px;background:#111;box-shadow:0 0 0 2px rgba(139,92,246,.55),0 20px 50px rgba(0,0,0,.5);touch-action:none;cursor:grab;user-select:none}.df-crop-viewport.dragging{cursor:grabbing}
+    .df-crop-workspace{display:flex;justify-content:center;align-items:center;background:#08090d;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:20px;min-height:520px}
+    .df-crop-viewport{position:relative;width:min(400px,80vw);aspect-ratio:1024/1535;overflow:hidden;border-radius:10px;background:#111;box-shadow:0 0 0 2px rgba(139,92,246,.55),0 20px 50px rgba(0,0,0,.5);touch-action:none;cursor:grab;user-select:none}.df-crop-viewport.dragging{cursor:grabbing}
     .df-crop-image{position:absolute;max-width:none;transform-origin:center center;pointer-events:none;user-select:none}
     .df-crop-guide{position:absolute;inset:0;pointer-events:none;border:1px solid rgba(255,255,255,.3);box-shadow:inset 0 0 0 9999px rgba(0,0,0,.04)}
     .df-crop-controls{margin-top:20px}.df-crop-controls label{display:flex;justify-content:space-between;color:#b8bac6;font-size:13px;margin-bottom:8px}.df-crop-controls input[type=range]{width:100%;accent-color:#8b5cf6}
+    .df-crop-size{margin-top:7px;color:#73778b;font-size:12px}
     .df-crop-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.df-crop-actions button{padding:12px 18px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:#181a25;color:#fff;cursor:pointer;font-weight:600}.df-crop-actions button:hover{border-color:rgba(150,120,255,.45);transform:translateY(-1px)}.df-crop-actions .primary{background:linear-gradient(135deg,#8b5cf6,#6d28d9);border-color:transparent}.df-crop-actions .primary:hover{box-shadow:0 8px 25px rgba(139,92,246,.3)}
+    .df-crop-error{margin-top:12px;padding:10px 12px;border-radius:9px;background:rgba(255,92,115,.1);border:1px solid rgba(255,92,115,.25);color:#ff9aaa;font-size:13px;display:none}
     @media(max-width:600px){.df-crop-modal{padding:16px}.df-crop-workspace{min-height:0;padding:12px}.df-crop-head h2{font-size:19px}}
   `
   document.head.appendChild(style)
 }
 
 function clampPosition() {
-  if (!image) return
+  if (!image || !modal) return
   const viewport = modal.querySelector(".df-crop-viewport")
   if (!viewport) return
 
@@ -68,16 +71,21 @@ function renderImage() {
   image.style.transform = "translate(-50%, -50%)"
 }
 
+function canvasToBlob(canvas, quality, callback) {
+  canvas.toBlob(callback, "image/jpeg", quality)
+}
+
 function createCrop() {
-  if (!image) return
+  if (!image || !modal) return
 
   const viewport = modal.querySelector(".df-crop-viewport")
+  const error = modal.querySelector(".df-crop-error")
+  const useButton = modal.querySelector(".df-crop-use")
   if (!viewport) return
 
   const vw = viewport.clientWidth
   const vh = viewport.clientHeight
   const scale = baseScale * zoom
-
   const displayedWidth = image.naturalWidth * scale
   const displayedHeight = image.naturalHeight * scale
 
@@ -87,8 +95,8 @@ function createCrop() {
   const sourceH = vh / scale
 
   const canvas = document.createElement("canvas")
-  canvas.width = CROP_WIDTH
-  canvas.height = CROP_HEIGHT
+  canvas.width = COVER_WIDTH
+  canvas.height = COVER_HEIGHT
   const ctx = canvas.getContext("2d")
 
   ctx.drawImage(
@@ -99,23 +107,66 @@ function createCrop() {
     sourceH,
     0,
     0,
-    CROP_WIDTH,
-    CROP_HEIGHT
+    COVER_WIDTH,
+    COVER_HEIGHT
   )
 
-  const dataUrl = canvas.toDataURL("image/jpeg", .9)
-  closeCropper()
+  useButton.disabled = true
+  useButton.textContent = "Processing..."
+
+  canvasToBlob(canvas, .92, (blob) => {
+    if (!blob) {
+      useButton.disabled = false
+      useButton.textContent = "Use This Cover"
+      error.textContent = "Could not process this image. Please try another image."
+      error.style.display = "block"
+      return
+    }
+
+    if (blob.size > MAX_FILE_SIZE) {
+      canvasToBlob(canvas, .82, (smallerBlob) => finishCrop(smallerBlob, error, useButton))
+      return
+    }
+
+    finishCrop(blob, error, useButton)
+  })
+}
+
+function finishCrop(blob, error, useButton) {
+  if (!blob) {
+    useButton.disabled = false
+    useButton.textContent = "Use This Cover"
+    error.textContent = "Could not process this image. Please try another image."
+    error.style.display = "block"
+    return
+  }
+
+  if (blob.size > MAX_FILE_SIZE) {
+    useButton.disabled = false
+    useButton.textContent = "Use This Cover"
+    error.textContent = "The cropped image is still larger than 5 MB. Please zoom out or use a different image."
+    error.style.display = "block"
+    return
+  }
 
   const input = window.__dreamforgeCropInput
-  if (!input) return
+  if (!input) {
+    closeCropper()
+    return
+  }
+
+  const file = new File([blob], "dreamforge-cover.jpg", {
+    type: "image/jpeg",
+    lastModified: Date.now()
+  })
+
+  closeCropper()
 
   const dataTransfer = new DataTransfer()
-  const byteString = atob(dataUrl.split(",")[1])
-  const bytes = new Uint8Array(byteString.length)
-  for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i)
-  const file = new File([bytes], "dreamforge-cover.jpg", { type: "image/jpeg" })
   dataTransfer.items.add(file)
   input.files = dataTransfer.files
+
+  input.dataset.dreamforgeCropped = "true"
   input.dispatchEvent(new Event("change", { bubbles: true }))
 }
 
@@ -136,7 +187,10 @@ function openCropper(src, input) {
   modal.innerHTML = `
     <div class="df-crop-modal" role="dialog" aria-modal="true" aria-label="Crop cover image">
       <div class="df-crop-head">
-        <div><h2>✂️ Crop Cover</h2><p>Drag the image to position it. Your cover will automatically use a 4:5 ratio.</p></div>
+        <div>
+          <h2>✂️ Crop Cover</h2>
+          <p>Position your image exactly how you want it. Dreamforge covers are 1024 × 1535.</p>
+        </div>
         <button class="df-crop-close" type="button" aria-label="Close">×</button>
       </div>
       <div class="df-crop-workspace">
@@ -148,7 +202,9 @@ function openCropper(src, input) {
       <div class="df-crop-controls">
         <label><span>Zoom</span><span class="df-crop-zoom-value">100%</span></label>
         <input class="df-crop-zoom" type="range" min="1" max="3" step="0.01" value="1" />
+        <div class="df-crop-size">Final cover: 1024 × 1535 • Maximum file size: 5 MB</div>
       </div>
+      <div class="df-crop-error"></div>
       <div class="df-crop-actions">
         <button class="df-crop-cancel" type="button">Cancel</button>
         <button class="df-crop-use primary" type="button">Use This Cover</button>
@@ -178,8 +234,8 @@ function openCropper(src, input) {
 
   zoomInput.addEventListener("input", () => {
     const previousScale = baseScale * zoom
-    const centerX = offsetX / previousScale
-    const centerY = offsetY / previousScale
+    const centerX = previousScale ? offsetX / previousScale : 0
+    const centerY = previousScale ? offsetY / previousScale : 0
     zoom = Number(zoomInput.value)
     const nextScale = baseScale * zoom
     offsetX = centerX * nextScale
@@ -212,9 +268,6 @@ function openCropper(src, input) {
 
   viewport.addEventListener("pointerup", stopDragging)
   viewport.addEventListener("pointercancel", stopDragging)
-  viewport.addEventListener("pointerleave", () => {
-    if (dragging) renderImage()
-  })
 
   modal.querySelector(".df-crop-close").addEventListener("click", closeCropper)
   modal.querySelector(".df-crop-cancel").addEventListener("click", closeCropper)
@@ -231,6 +284,11 @@ function handleCoverInput(event) {
 
   const wrapper = input.closest(".story-cover-upload")
   if (!wrapper) return
+
+  if (input.dataset.dreamforgeCropped === "true") {
+    delete input.dataset.dreamforgeCropped
+    return
+  }
 
   const file = input.files?.[0]
   if (!file || !file.type.startsWith("image/")) return
