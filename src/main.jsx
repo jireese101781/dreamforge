@@ -6,6 +6,7 @@ import './coverDisplayFix.js'
 import './characterSystem.js'
 import './storyCreatorOrganizerV2.js'
 import './storyCreatorUiFix.js'
+import './storyCreatorPolish.js'
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
